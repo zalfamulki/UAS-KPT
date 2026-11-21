@@ -42,6 +42,8 @@ class Worker:
         self.monitor = SysMonitor()
         self.current_task = None              # task_id yang sedang diproses
         self.stop_event = threading.Event()
+        self._last_idle_reason = None         # anti-spam pesan "menunggu tugas"
+        self._last_idle_ts = 0.0
         self.heartbeat_interval = config["heartbeat_interval"]
 
     # ---------- koneksi ----------
@@ -84,6 +86,24 @@ class Worker:
                 return  # sesi berakhir; main loop yang menangani reconnect
             self.stop_event.wait(self.heartbeat_interval)
 
+    def _report_idle(self, reason):
+        """Tampilkan status 'menunggu tugas' beserta alasannya supaya pengguna
+        Worker tidak menyangka program macet saat laptopnya diam.
+        Ditampilkan hanya saat alasan berubah atau tiap 15 detik (anti-spam)."""
+        now = time.monotonic()
+        reason = reason or "queue_empty"
+        if reason == self._last_idle_reason and (now - self._last_idle_ts) < 15.0:
+            return
+        self._last_idle_reason = reason
+        self._last_idle_ts = now
+        if reason == "filter":
+            log.info("[menunggu tugas] Master sedang memilih worker lain untuk "
+                     "distribusi — laptop ini sengaja idle, bukan macet. "
+                     "(Di terminal master bisa ketik 'all' atau 'pilih <nama-mu>')")
+        else:
+            log.info("[menunggu tugas] Antrean kosong / semua task sedang "
+                     "dikerjakan worker lain — otomatis lanjut begitu ada tugas.")
+
     # ---------- pekerjaan ----------
     def _handle_task(self, task):
         self.current_task = task["task_id"]
@@ -112,7 +132,8 @@ class Worker:
                 if mtype == TASK:
                     self._handle_task(msg)
                 elif mtype == NO_TASK:
-                    time.sleep(0.5)  # antrean kosong; poll lagi nanti
+                    self._report_idle(msg.get("reason"))
+                    time.sleep(0.5)  # poll lagi nanti
                 elif mtype == SHUTDOWN:
                     log.info("Master meminta SHUTDOWN: %s", msg.get("reason"))
                     return

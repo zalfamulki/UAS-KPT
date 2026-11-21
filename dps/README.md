@@ -63,9 +63,12 @@ python master/master.py --targets targets.txt --gt target/ground_truth.json
 | `all` | kembali membagikan tugas ke **SEMUA** worker (default) |
 | `keluar` | hentikan master dengan rapi (hasil seadanya tetap disimpan) |
 
-Dashboard juga menampilkan baris per worker (IP + nama laptop + status), dan
+Dashboard juga menampilkan baris per worker (IP + nama laptop + **status**:
+`kerja` / `menunggu (tidak dipilih)` / `menunggu (antrean kosong)` / `MATI`),
+muncul `[hint]` otomatis saat ada tugas antre di mode `pilih`, dan
 IP/hostname tiap worker ikut tersimpan di `summary.json` → dipakai untuk tabel
-Konfigurasi Node di BAB III.
+Konfigurasi Node di BAB III. Di sisi worker, keadaan menganggur juga dijelaskan
+(`[menunggu tugas] ...` beserta alasannya) supaya tidak terlihat seperti macet.
 
 **Terminal 3.. — Worker** (satu perintah per node; ulangi sesuai jumlah worker):
 

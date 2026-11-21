@@ -23,6 +23,11 @@ SHUTDOWN = "SHUTDOWN"
 RESULT = "RESULT"
 HEARTBEAT = "HEARTBEAT"
 
+# Alasan opsional pada NO_TASK — agar pengguna Worker tidak bingung kenapa
+# laptopnya diam (ditampilkan di log Worker, bukan sekadar diam tanpa pesan).
+NO_TASK_FILTER = "filter"        # worker tidak termasuk pilihan distribusi master
+NO_TASK_QUEUE_EMPTY = "queue_empty"  # antrean kosong / semua task sedang dikerjakan worker lain
+
 # Field wajib per tipe pesan
 REQUIRED_FIELDS = {
     REGISTER: {"type", "worker_id", "cpu_cores", "hostname", "processes"},

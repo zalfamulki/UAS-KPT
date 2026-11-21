@@ -108,8 +108,13 @@ all                     -> kembali membagikan ke SEMUA worker (default)
 keluar                  -> hentikan master dengan rapi
 ```
 
-Saat `pilih` aktif, worker lain tetap tersambung tapi tidak diberi tugas
-(muncul `NO_TASK` di log mereka) sampai kamu ketik `all` lagi.
+Saat `pilih` aktif, worker lain tetap tersambung tapi tidak diberi tugas.
+Biar tidak bingung, **laptop yang tidak dipilih akan menampilkan pesan jelas**
+di layarnya (bukan diam tanpa kabar):
+```
+[menunggu tugas] Master sedang memilih worker lain untuk distribusi — laptop ini sengaja idle, bukan macet. (Di terminal master bisa ketik 'all' atau 'pilih <nama-mu>')
+```
+Begitu kamu ketik `all`, worker itu langsung dapat tugas lagi.
 
 > Varian pembanding load balancing (kalau ditanya dosen):
 > `python master/master.py --mode static --expected-workers 9`
@@ -147,19 +152,26 @@ kerja tanpa perlu diatur-atur lagi.
 ## SETELAH SEMUA WORKER MASUK — apa yang kelihatan?
 
 1. **Dashboard** di layar master, update tiap 2 detik — **tiap laptop langsung
-   terlacak: IP + nama laptopnya**:
+   terlacak: IP + nama laptop + STATUS-nya**:
    ```
    [dashboard] workers=9 (alive=9) | task: done=5 inflight=9 queued=3 failed=0 | port hasil=1500/2000 dup=0
    [distribusi] SEMUA worker
-     w0                     192.168.1.11    DESKTOP-ALFA         proses=8    tugas=2/2 cpu=35%
-     w1                     192.168.1.12    DESKTOP-BETA         proses=8    tugas=1/1 cpu=32%
+     w0    192.168.1.11    DESKTOP-ALFA    proses=8    tugas=2/2 cpu=35% | kerja
+     w1    192.168.1.12    DESKTOP-BETA    proses=8    tugas=1/1 cpu=32% | kerja
      ...
    ```
    Kalau sedang mode `pilih`, baris `[distribusi]` berubah jadi
-   `[distribusi] hanya ke: 192.168.1.11`.
+   `[distribusi] hanya ke: 192.168.1.11`, status worker yang tidak dipilih
+   berubah jadi `menunggu (tidak dipilih)`, dan muncul pengingat kalau ada
+   tugas antre:
+   ```
+   [hint] ada 3 tugas antre — kalau terasa macet, ketik 'all' atau 'pilih' worker lain
+   ```
 2. Di layar worker muncul identitas node sendiri saat connect:
    `Node ini: DESKTOP-ALFA (192.168.1.11) -> master 192.168.1.10:5000`,
-   lalu sesekali: `Task t00003 selesai (250 port, 3.12 s)`
+   lalu sesekali: `Task t00003 selesai (250 port, 3.12 s)`. Kalau sempat
+   menganggur, muncul pesan `[menunggu tugas] ...` yang menjelaskan kenapa
+   (lihat bagian "Kalau terasa macet" di bawah).
 3. Kalau semua tugas selesai, sendirian berhenti:
    - Master: `Semua task DONE/FAILED -> sistem selesai` → dia menyuruh semua
      worker pulang (SHUTDOWN), lalu menyimpan hasil.
@@ -183,6 +195,22 @@ Poin yang enak disorot ke dosen di momen ini:
 - **Load balancing** — worker yang cepat otomatis dapat tugas lebih banyak
   (cek `worker_stats` di `summary.json`), atau demo-kan perbedaannya dengan
   perintah `pilih` vs `all`.
+
+### Kalau terasa macet / worker diam — baca statusnya, jangan panik
+
+Semua keadaan "diam" sekarang punya pesan. Arti tiap status:
+
+| Yang terlihat | Artinya | Yang perlu dilakukan |
+|---|---|---|
+| Worker: `[menunggu tugas] Master sedang memilih worker lain...` | laptop sengaja tidak dipilih (mode `pilih` aktif) | di master ketik `all`, atau `pilih` nama laptop itu |
+| Worker: `[menunggu tugas] Antrean kosong / semua task sedang dikerjakan worker lain...` | normal — tugas sedang dipegang worker lain | tidak perlu apa-apa, otomatis lanjut |
+| Master: kolom status `menunggu (tidak dipilih)` | sama dengan baris pertama di atas | ketik `all` di master |
+| Master: `[hint] ada N tugas antre...` | ada tugas menunggu di mode `pilih` | ketik `all` atau `pilih` worker lain |
+| Master: `MATI` di baris worker | koneksi worker putus / proses ditutup | tugas otomatis di-requeue; jalankan lagi `python worker/worker.py --master ...` di PC itu |
+| Master: `failed=N` naik | 1 tugas sudah 3x gagal | cek jaringan/target, lalu jalankan ulang run |
+
+Perintah `list` juga menampilkan kolom status yang sama — jadi kapan pun
+ragu, ketik `list` dulu sebelum mengambil tindakan.
 
 ---
 

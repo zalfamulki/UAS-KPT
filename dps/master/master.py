@@ -18,8 +18,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from common.protocol import (HEARTBEAT, NO_TASK, REGISTER, REGISTER_ACK, RESULT,
-                             SHUTDOWN, TASK, TASK_REQUEST, MessageConnection, make_msg)
+from common.protocol import (HEARTBEAT, NO_TASK, NO_TASK_FILTER, NO_TASK_QUEUE_EMPTY,
+                             REGISTER, REGISTER_ACK, RESULT, SHUTDOWN, TASK, TASK_REQUEST,
+                             MessageConnection, make_msg)
 from common.utils import (generate_tasks, load_config, read_allowlist, read_targets,
                           setup_logger, total_ports)
 from master.fault_monitor import FaultMonitor
@@ -120,14 +121,18 @@ class Master:
                         if task:
                             self.metrics.event("task_assign", worker_id=wid, task_id=task["task_id"])
                             self._bump(wid, "assigned")
+                            self._set_idle(wid, None)  # sedang kerja
                             conn.send(make_msg(TASK, task_id=task["task_id"], host=task["host"],
                                                port_start=task["port_start"], port_end=task["port_end"],
                                                timeout=task["timeout"], attempt=task["attempt"]))
                         else:
-                            conn.send(make_msg(NO_TASK))
+                            conn.send(make_msg(NO_TASK, reason=NO_TASK_QUEUE_EMPTY))
+                            self._set_idle(wid, "menunggu (antrean kosong)")
                     else:
-                        # worker tidak termasuk pilihan distribusi saat ini
-                        conn.send(make_msg(NO_TASK))
+                        # worker tidak termasuk pilihan distribusi saat ini — beri
+                        # tahu alasannya supaya penggunanya tidak bingung laptopnya diam
+                        conn.send(make_msg(NO_TASK, reason=NO_TASK_FILTER))
+                        self._set_idle(wid, "menunggu (tidak dipilih)")
                     self._touch(wid)
                 elif mtype == HEARTBEAT:
                     self._touch(wid, cpu=msg.get("cpu"), mem=msg.get("mem"))
@@ -155,7 +160,7 @@ class Master:
                                  "cpu_cores": msg["cpu_cores"], "hostname": msg["hostname"],
                                  "processes": msg["processes"], "last_seen": time.time(),
                                  "alive": True, "cpu": None, "mem": None,
-                                 "assigned": 0, "done": 0}
+                                 "assigned": 0, "done": 0, "idle_reason": None}
             self.metrics.event("register", worker_id=wid,
                                detail={"hostname": msg["hostname"], "ip": addr[0],
                                        "cores": msg["cpu_cores"], "processes": msg["processes"]})
@@ -180,6 +185,13 @@ class Master:
             w = self.workers.get(wid)
             if w:
                 w[key] = w.get(key, 0) + 1
+
+    def _set_idle(self, wid, text):
+        """Catat status 'sedang tidak memegang tugas' (None = sedang kerja)."""
+        with self.lock:
+            w = self.workers.get(wid)
+            if w:
+                w["idle_reason"] = text
 
     # ---------- distribusi: semua vs worker terpilih ----------
     def _find_workers(self, token):
@@ -227,6 +239,8 @@ class Master:
             names = "; ".join(f"{wid} [{self.workers[wid]['hostname']} @ "
                               f"{self.workers[wid]['addr'][0]}]" for wid in sorted(matched))
         print(f"[distribusi] hanya ke {len(matched)} worker: {names}", flush=True)
+        print("[distribusi] worker lain tetap tersambung tapi tidak mendapat tugas — "
+              "ketik 'all' untuk kembali ke semua worker", flush=True)
 
     # ---------- perintah interaktif di terminal master ----------
     def _print_help(self):
@@ -244,14 +258,7 @@ class Master:
             print("(belum ada worker yang terhubung)", flush=True)
             return
         for wid, w in rows:
-            ip = w["addr"][0] if w.get("addr") else "?"
-            cpu = "-" if w.get("cpu") is None else f"{w['cpu']:.0f}%"
-            line = (f"  {wid:<22} {ip:<15} {str(w.get('hostname', '?'))[:20]:<20} "
-                    f"proses={w.get('processes', '?'):<4} "
-                    f"tugas={w.get('assigned', 0)}/{w.get('done', 0)} cpu={cpu}")
-            if not w["alive"]:
-                line += " [MATI]"
-            print(line, flush=True)
+            print(self._worker_row(wid, w), flush=True)
 
     def _command_loop(self):
         """Baca perintah dari terminal master: pilih distribusi, lihat worker, dst.
@@ -340,6 +347,18 @@ class Master:
                 except (OSError, ConnectionError):
                     pass
 
+    @staticmethod
+    def _worker_row(wid, w):
+        """Satu baris info worker untuk dashboard/perintah 'list': IP, nama
+        laptop, proses, tugas, CPU, dan STATUS (kerja/menunggu/MATI) supaya
+        keadaan 'diam' selalu terlihat alasannya."""
+        ip = w["addr"][0] if w.get("addr") else "?"
+        cpu = "-" if w.get("cpu") is None else f"{w['cpu']:.0f}%"
+        status = "MATI" if not w["alive"] else (w.get("idle_reason") or "kerja")
+        return (f"  {wid:<22} {ip:<15} {str(w.get('hostname', '?'))[:20]:<20} "
+                f"proses={w.get('processes', '?'):<4} "
+                f"tugas={w.get('assigned', 0)}/{w.get('done', 0)} cpu={cpu} | {status}")
+
     # ---------- dashboard ----------
     def _dashboard(self):
         while not self.done_event.is_set():
@@ -359,15 +378,11 @@ class Master:
                 print("[distribusi] SEMUA worker", flush=True)
             else:
                 print(f"[distribusi] hanya ke: {', '.join(dist['tokens'])}", flush=True)
+                if st["queue_len"] > 0:
+                    print(f"[hint] ada {st['queue_len']} tugas antre — kalau terasa macet, "
+                          f"ketik 'all' atau 'pilih' worker lain", flush=True)
             for wid, w in rows:
-                ip = w["addr"][0] if w.get("addr") else "?"
-                cpu = "-" if w.get("cpu") is None else f"{w['cpu']:.0f}%"
-                line = (f"  {wid:<22} {ip:<15} {str(w.get('hostname', '?'))[:20]:<20} "
-                        f"proses={w.get('processes', '?'):<4} "
-                        f"tugas={w.get('assigned', 0)}/{w.get('done', 0)} cpu={cpu}")
-                if not w["alive"]:
-                    line += " [MATI]"
-                print(line, flush=True)
+                print(self._worker_row(wid, w), flush=True)
 
     # ---------- penutupan ----------
     def _finish(self):
