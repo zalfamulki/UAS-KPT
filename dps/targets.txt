@@ -1,0 +1,4 @@
+# Daftar target scan: format "host port_start port_end"
+# Harus ada di allowlist.txt. Rentang contoh di bawah dipakai untuk uji cepat lokal;
+# kalibrasi beban (rancangan 6.2) dilakukan dengan memperbesar rentang/timeout.
+127.0.0.1 1 2000

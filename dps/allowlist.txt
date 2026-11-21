@@ -1,0 +1,5 @@
+# Allowlist target — Master MENOLAK target di luar daftar ini (rancangan bagian 2).
+# WAJIB hanya berisi host milik sendiri / yang diizinkan eksplisit.
+127.0.0.1
+localhost
+::1

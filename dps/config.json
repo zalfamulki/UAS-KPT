@@ -1,0 +1,11 @@
+{
+  "master_host": "0.0.0.0",
+  "master_port": 5000,
+  "scan_timeout": 0.5,
+  "chunk_size": 250,
+  "heartbeat_interval": 2.0,
+  "heartbeat_timeout": 6.0,
+  "retry_limit": 3,
+  "mode": "dynamic",
+  "results_dir": "results"
+}
