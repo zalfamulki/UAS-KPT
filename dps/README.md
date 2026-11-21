@@ -54,6 +54,19 @@ python target/target_sim.py --serve --gt target/ground_truth.json
 python master/master.py --targets targets.txt --gt target/ground_truth.json
 ```
 
+**Perintah interaktif di terminal Master** (diketik langsung selama master berjalan):
+
+| Perintah | Fungsi |
+|---|---|
+| `list` | daftar worker: **IP, nama laptop (hostname)**, jumlah proses, tugas dapat/selesai, CPU |
+| `pilih <ip / nama / id>` | distribusi **hanya** ke worker itu — contoh: `pilih 192.168.1.11`, `pilih DESKTOP-XYZ`, `pilih w1` (boleh beberapa: `pilih 192.168.1.11 192.168.1.12`) |
+| `all` | kembali membagikan tugas ke **SEMUA** worker (default) |
+| `keluar` | hentikan master dengan rapi (hasil seadanya tetap disimpan) |
+
+Dashboard juga menampilkan baris per worker (IP + nama laptop + status), dan
+IP/hostname tiap worker ikut tersimpan di `summary.json` → dipakai untuk tabel
+Konfigurasi Node di BAB III.
+
 **Terminal 3.. — Worker** (satu perintah per node; ulangi sesuai jumlah worker):
 
 ```

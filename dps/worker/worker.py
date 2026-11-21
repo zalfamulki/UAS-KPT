@@ -50,6 +50,11 @@ class Worker:
         sock = socket.create_connection((host, port), timeout=10)
         sock.settimeout(None)  # blocking setelah connect berhasil
         self.conn = MessageConnection(sock)
+        try:
+            local_ip = sock.getsockname()[0]
+        except OSError:
+            local_ip = "?"
+        log.info("Node ini: %s (%s) -> master %s:%d", socket.gethostname(), local_ip, host, port)
         self.conn.send(make_msg(REGISTER,
                                 worker_id=self.worker_id,
                                 cpu_cores=os.cpu_count() or 1,

@@ -57,7 +57,8 @@ class Master:
         self.results_dir = overrides.get("results_dir", cfg["results_dir"])
         self.gt_path = overrides.get("gt")
 
-        self.workers = {}  # worker_id -> {conn, addr, cpu_cores, hostname, processes, last_seen, alive, cpu, mem}
+        self.workers = {}  # worker_id -> {conn, addr, hostname, processes, last_seen, alive, cpu, mem, assigned, done}
+        self.distribution = {"mode": "all", "tokens": [], "worker_ids": set()}
         self.lock = threading.RLock()
         self.done_event = threading.Event()
         self.listen_sock = None
@@ -78,6 +79,7 @@ class Master:
         threading.Thread(target=self._accept_loop, daemon=True).start()
         FaultMonitor(self).start()
         threading.Thread(target=self._dashboard, daemon=True).start()
+        threading.Thread(target=self._command_loop, daemon=True).start()
 
         try:
             self.done_event.wait()
@@ -113,13 +115,18 @@ class Master:
                 msg = conn.recv()
                 mtype = msg["type"]
                 if mtype == TASK_REQUEST:
-                    task = self.scheduler.assign_next(wid)
-                    if task:
-                        self.metrics.event("task_assign", worker_id=wid, task_id=task["task_id"])
-                        conn.send(make_msg(TASK, task_id=task["task_id"], host=task["host"],
-                                           port_start=task["port_start"], port_end=task["port_end"],
-                                           timeout=task["timeout"], attempt=task["attempt"]))
+                    if self._distribution_allows(wid):
+                        task = self.scheduler.assign_next(wid)
+                        if task:
+                            self.metrics.event("task_assign", worker_id=wid, task_id=task["task_id"])
+                            self._bump(wid, "assigned")
+                            conn.send(make_msg(TASK, task_id=task["task_id"], host=task["host"],
+                                               port_start=task["port_start"], port_end=task["port_end"],
+                                               timeout=task["timeout"], attempt=task["attempt"]))
+                        else:
+                            conn.send(make_msg(NO_TASK))
                     else:
+                        # worker tidak termasuk pilihan distribusi saat ini
                         conn.send(make_msg(NO_TASK))
                     self._touch(wid)
                 elif mtype == HEARTBEAT:
@@ -147,12 +154,15 @@ class Master:
             self.workers[wid] = {"conn": conn, "addr": addr,
                                  "cpu_cores": msg["cpu_cores"], "hostname": msg["hostname"],
                                  "processes": msg["processes"], "last_seen": time.time(),
-                                 "alive": True, "cpu": None, "mem": None}
-            self.metrics.event("register", worker_id=wid)
+                                 "alive": True, "cpu": None, "mem": None,
+                                 "assigned": 0, "done": 0}
+            self.metrics.event("register", worker_id=wid,
+                               detail={"hostname": msg["hostname"], "ip": addr[0],
+                                       "cores": msg["cpu_cores"], "processes": msg["processes"]})
         if self.mode == "static":
             self.scheduler.register_static_partition(wid)
-        log.info("Worker %s terhubung dari %s (cores=%s, proses=%s)",
-                 wid, addr, msg["cpu_cores"], msg["processes"])
+        log.info("Worker %s [%s @ %s] terhubung (cores=%s, proses=%s)",
+                 wid, msg["hostname"], addr[0], msg["cpu_cores"], msg["processes"])
         return wid
 
     def _touch(self, wid, cpu=None, mem=None):
@@ -165,6 +175,118 @@ class Master:
                 if mem is not None:
                     w["mem"] = mem
 
+    def _bump(self, wid, key):
+        with self.lock:
+            w = self.workers.get(wid)
+            if w:
+                w[key] = w.get(key, 0) + 1
+
+    # ---------- distribusi: semua vs worker terpilih ----------
+    def _find_workers(self, token):
+        """Cocokkan token dengan worker_id / hostname (nama laptop) / IP."""
+        t = token.lower()
+        out = set()
+        with self.lock:
+            for wid, w in self.workers.items():
+                ip = w["addr"][0].lower() if w.get("addr") else ""
+                if t in wid.lower() or t in w["hostname"].lower() or t in ip:
+                    out.add(wid)
+        return out
+
+    def _distribution_allows(self, wid):
+        """True bila worker ini boleh menerima tugas menurut pilihan distribusi."""
+        with self.lock:
+            dist = self.distribution
+            if dist["mode"] == "all":
+                return True
+            if wid in dist["worker_ids"]:
+                return True
+            w = self.workers.get(wid)
+            if not w:
+                return False
+            ip = w["addr"][0].lower() if w.get("addr") else ""
+            host = w["hostname"].lower()
+            for tok in dist["tokens"]:
+                if tok in wid.lower() or tok in host or tok in ip:
+                    return True  # worker baru yang cocok dengan pilihan ikut dikerjakan
+            return False
+
+    def _set_distribution_to(self, tokens):
+        """Batasi distribusi hanya ke worker yang cocok dengan token (IP/nama/id)."""
+        with self.lock:
+            matched = set()
+            for tok in tokens:
+                matched |= self._find_workers(tok)
+            if not matched:
+                print(f"[distribusi] tidak ada worker yang cocok dengan "
+                      f"'{' '.join(tokens)}' — pengaturan tidak berubah", flush=True)
+                return
+            self.distribution = {"mode": "pilih",
+                                 "tokens": [t.lower() for t in tokens],
+                                 "worker_ids": matched}
+            names = "; ".join(f"{wid} [{self.workers[wid]['hostname']} @ "
+                              f"{self.workers[wid]['addr'][0]}]" for wid in sorted(matched))
+        print(f"[distribusi] hanya ke {len(matched)} worker: {names}", flush=True)
+
+    # ---------- perintah interaktif di terminal master ----------
+    def _print_help(self):
+        print("[perintah master] list | pilih <ip/nama/id> | all | keluar | bantuan", flush=True)
+        print("  list          : daftar worker (IP + nama laptop + tugas + CPU)", flush=True)
+        print("  pilih <...>   : distribusi HANYA ke worker itu — contoh: pilih 192.168.1.11, "
+              "pilih DESKTOP-XYZ, pilih w1 (boleh lebih dari satu)", flush=True)
+        print("  all           : kembali membagikan tugas ke SEMUA worker (default)", flush=True)
+        print("  keluar        : hentikan master dengan rapi (hasil seadanya tetap disimpan)", flush=True)
+
+    def _print_workers(self):
+        with self.lock:
+            rows = [(wid, dict(w)) for wid, w in self.workers.items()]
+        if not rows:
+            print("(belum ada worker yang terhubung)", flush=True)
+            return
+        for wid, w in rows:
+            ip = w["addr"][0] if w.get("addr") else "?"
+            cpu = "-" if w.get("cpu") is None else f"{w['cpu']:.0f}%"
+            line = (f"  {wid:<22} {ip:<15} {str(w.get('hostname', '?'))[:20]:<20} "
+                    f"proses={w.get('processes', '?'):<4} "
+                    f"tugas={w.get('assigned', 0)}/{w.get('done', 0)} cpu={cpu}")
+            if not w["alive"]:
+                line += " [MATI]"
+            print(line, flush=True)
+
+    def _command_loop(self):
+        """Baca perintah dari terminal master: pilih distribusi, lihat worker, dst.
+        Bila stdin bukan terminal interaktif (mis. saat dijalankan bench), thread
+        ini selesai dan master tetap berjalan normal (mode 'all')."""
+        self._print_help()
+        while not self.done_event.is_set():
+            try:
+                line = input("perintah> ").strip()
+            except (EOFError, OSError):
+                return
+            if not line:
+                continue
+            parts = line.split()
+            cmd = parts[0].lower()
+            if cmd in ("list", "ls", "status", "daftar"):
+                self._print_workers()
+            elif cmd in ("all", "semua"):
+                with self.lock:
+                    self.distribution = {"mode": "all", "tokens": [], "worker_ids": set()}
+                print("[distribusi] kembali ke SEMUA worker", flush=True)
+            elif cmd in ("pilih", "target", "filter"):
+                if len(parts) < 2:
+                    print("[distribusi] contoh: pilih 192.168.1.11 | pilih DESKTOP-XYZ | pilih w1",
+                          flush=True)
+                else:
+                    self._set_distribution_to(parts[1:])
+            elif cmd in ("keluar", "quit", "exit", "stop"):
+                print("[master] diminta berhenti — menyimpan hasil seadanya...", flush=True)
+                self.done_event.set()
+            elif cmd in ("bantuan", "help", "?"):
+                self._print_help()
+            else:
+                print(f"perintah '{line}' tidak dikenal — ketik 'bantuan'", flush=True)
+
     # ---------- hasil ----------
     def _on_result(self, wid, msg):
         rec = self.scheduler.table.get(msg["task_id"])
@@ -176,6 +298,7 @@ class Master:
             self.scheduler.mark_done(msg["task_id"])
             self.metrics.event("task_done", worker_id=wid, task_id=msg["task_id"])
             self.metrics.mark_last_result()
+            self._bump(wid, "done")
         else:
             self.metrics.event("task_duplicate", worker_id=wid, task_id=msg["task_id"])
             log.info("Hasil duplikat task %s dari %s dibuang (idempotensi)", msg["task_id"], wid)
@@ -221,16 +344,30 @@ class Master:
     def _dashboard(self):
         while not self.done_event.is_set():
             time.sleep(2.0)
+            with self.lock:
+                rows = [(wid, dict(w)) for wid, w in self.workers.items()]
+                dist = dict(self.distribution)
             st = self.scheduler.stats()
             rc = self.results.counts()
-            with self.lock:
-                alive = sum(1 for w in self.workers.values() if w["alive"])
-                total = len(self.workers)
-            print(f"[dashboard] workers={total} (alive={alive}) | "
+            alive = sum(1 for _, w in rows if w["alive"])
+            print(f"[dashboard] workers={len(rows)} (alive={alive}) | "
                   f"task: done={st['by_status']['DONE']} inflight={st['by_status']['IN_FLIGHT']} "
                   f"queued={st['queue_len']} failed={st['by_status']['FAILED']} | "
                   f"port hasil={rc['ports']}/{self.total_ports} dup={rc['duplicates']}",
                   flush=True)
+            if dist["mode"] == "all":
+                print("[distribusi] SEMUA worker", flush=True)
+            else:
+                print(f"[distribusi] hanya ke: {', '.join(dist['tokens'])}", flush=True)
+            for wid, w in rows:
+                ip = w["addr"][0] if w.get("addr") else "?"
+                cpu = "-" if w.get("cpu") is None else f"{w['cpu']:.0f}%"
+                line = (f"  {wid:<22} {ip:<15} {str(w.get('hostname', '?'))[:20]:<20} "
+                        f"proses={w.get('processes', '?'):<4} "
+                        f"tugas={w.get('assigned', 0)}/{w.get('done', 0)} cpu={cpu}")
+                if not w["alive"]:
+                    line += " [MATI]"
+                print(line, flush=True)
 
     # ---------- penutupan ----------
     def _finish(self):

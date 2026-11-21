@@ -46,7 +46,13 @@ class MetricsLogger:
             if not wid:
                 continue
             d = per.setdefault(wid, {"assigned": 0, "done": 0, "last_event": None})
-            if e["event"] == "task_assign":
+            if e["event"] == "register":
+                det = e.get("detail") or {}
+                if det:
+                    d["hostname"] = det.get("hostname")
+                    d["ip"] = det.get("ip")
+                    d["processes"] = det.get("processes")
+            elif e["event"] == "task_assign":
                 d["assigned"] += 1
             elif e["event"] == "task_done":
                 d["done"] += 1

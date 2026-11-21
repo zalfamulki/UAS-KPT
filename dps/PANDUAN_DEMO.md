@@ -97,6 +97,20 @@ Ini titik penting demo: **2000 port dipecah jadi 8 tugas kecil (task
 decomposition)**, dan Master sekarang menunggu worker datang. Catat IP master
 tadi — akan ditulis di perintah worker.
 
+**Perintah yang bisa diketik langsung di terminal master** (fitur pilihan distribusi):
+
+```
+list                    -> lihat daftar worker: IP + NAMA LAPTOP + jumlah tugas + CPU
+pilih 192.168.1.11      -> distribusi HANYA ke laptop itu
+pilih DESKTOP-XYZ       -> bisa juga pakai nama laptop
+pilih w1                -> atau pakai id worker (boleh beberapa: pilih 192.168.1.11 192.168.1.12)
+all                     -> kembali membagikan ke SEMUA worker (default)
+keluar                  -> hentikan master dengan rapi
+```
+
+Saat `pilih` aktif, worker lain tetap tersambung tapi tidak diberi tugas
+(muncul `NO_TASK` di log mereka) sampai kamu ketik `all` lagi.
+
 > Varian pembanding load balancing (kalau ditanya dosen):
 > `python master/master.py --mode static --expected-workers 9`
 
@@ -132,11 +146,20 @@ kerja tanpa perlu diatur-atur lagi.
 
 ## SETELAH SEMUA WORKER MASUK — apa yang kelihatan?
 
-1. **Dashboard** di layar master, update tiap 2 detik:
+1. **Dashboard** di layar master, update tiap 2 detik — **tiap laptop langsung
+   terlacak: IP + nama laptopnya**:
    ```
    [dashboard] workers=9 (alive=9) | task: done=5 inflight=9 queued=3 failed=0 | port hasil=1500/2000 dup=0
+   [distribusi] SEMUA worker
+     w0                     192.168.1.11    DESKTOP-ALFA         proses=8    tugas=2/2 cpu=35%
+     w1                     192.168.1.12    DESKTOP-BETA         proses=8    tugas=1/1 cpu=32%
+     ...
    ```
-2. Di layar worker sesekali muncul: `Task t00003 selesai (250 port, 3.12 s)`
+   Kalau sedang mode `pilih`, baris `[distribusi]` berubah jadi
+   `[distribusi] hanya ke: 192.168.1.11`.
+2. Di layar worker muncul identitas node sendiri saat connect:
+   `Node ini: DESKTOP-ALFA (192.168.1.11) -> master 192.168.1.10:5000`,
+   lalu sesekali: `Task t00003 selesai (250 port, 3.12 s)`
 3. Kalau semua tugas selesai, sendirian berhenti:
    - Master: `Semua task DONE/FAILED -> sistem selesai` → dia menyuruh semua
      worker pulang (SHUTDOWN), lalu menyimpan hasil.
@@ -149,15 +172,17 @@ Hasil tersimpan di folder `results/`:
 | `results.json` / `results.csv` | status tiap port (open/closed/filtered) |
 | `events.csv` | catatan kejadian: siapa daftar, siapa kerja task apa, worker mati, requeue |
 | `heartbeats.csv` | catatan CPU/mem tiap worker |
-| `summary.json` | angka penting: waktu eksekusi, throughput, distribusi tugas, **perbandingan dengan kunci jawaban** |
+| `summary.json` | angka penting: waktu eksekusi, throughput, distribusi tugas, **IP + nama laptop tiap worker**, dan **perbandingan dengan kunci jawaban** |
 
 Poin yang enak disorot ke dosen di momen ini:
 - **Task decomposition** — lihat log master: `8 task (chunk=250)`.
 - **Parallel** — tiap worker pakai banyak proses (secara default = jumlah core;
   bisa diatur `--processes 4` misalnya).
-- **Distributed** — TCP beneran antar PC; lihat IP tiap worker di log.
+- **Distributed** — TCP beneran antar PC; IP + nama laptop tiap node kelihatan
+  di dashboard dan tersimpan di `summary.json`.
 - **Load balancing** — worker yang cepat otomatis dapat tugas lebih banyak
-  (cek `worker_stats` di `summary.json`).
+  (cek `worker_stats` di `summary.json`), atau demo-kan perbedaannya dengan
+  perintah `pilih` vs `all`.
 
 ---
 
