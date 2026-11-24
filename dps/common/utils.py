@@ -30,7 +30,7 @@ def setup_logger(name):
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S"))
+            "%(asctime)s  %(levelname)-7s %(message)s", datefmt="%H:%M:%S"))
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
         logger.propagate = False

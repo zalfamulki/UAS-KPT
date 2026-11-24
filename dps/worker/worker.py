@@ -8,6 +8,9 @@ Auto-reconnect: bila koneksi ke Master putus (Master restart / jaringan
 kembali), Worker mencoba REGISTER ulang — selaras dengan mekanisme fault
 tolerance (Worker yang kembali boleh ikut bekerja lagi, 4.7).
 
+Tampilan terminal Worker dibuat ringkas: panel identitas saat terhubung,
+satu baris saat mulai/selesai tugas, dan alasan yang jelas saat menganggur.
+
 Windows: menjalankan file ini langsung (`python worker/worker.py`).
 """
 
@@ -21,13 +24,23 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from common.protocol import (HEARTBEAT, NO_TASK, REGISTER, REGISTER_ACK, RESULT,
-                             SHUTDOWN, TASK, TASK_REQUEST, MessageConnection, make_msg)
+from common.protocol import (HEARTBEAT, NO_TASK, NO_TASK_NOT_STARTED, REGISTER,
+                             REGISTER_ACK, RESULT, SHUTDOWN, TASK, TASK_REQUEST,
+                             MessageConnection, make_msg)
+from common.ui import console
 from common.utils import load_config, setup_logger
 from worker.pool import ScanPool
 from worker.sys_monitor import SysMonitor
 
 log = setup_logger("worker")
+
+
+def _fmt_duration(seconds):
+    seconds = max(0.0, float(seconds))
+    if seconds < 60:
+        return f"{seconds:.2f} s"
+    minutes, rest = divmod(int(round(seconds)), 60)
+    return f"{minutes}m {rest:02d}s"
 
 
 class Worker:
@@ -44,6 +57,11 @@ class Worker:
         self.stop_event = threading.Event()
         self._last_idle_reason = None         # anti-spam pesan "menunggu tugas"
         self._last_idle_ts = 0.0
+        self._banner_shown = False
+        self.local_ip = "?"
+        self.tasks_done = 0
+        self.ports_done = 0
+        self.started_at = time.monotonic()
         self.heartbeat_interval = config["heartbeat_interval"]
 
     # ---------- koneksi ----------
@@ -53,20 +71,29 @@ class Worker:
         sock.settimeout(None)  # blocking setelah connect berhasil
         self.conn = MessageConnection(sock)
         try:
-            local_ip = sock.getsockname()[0]
+            self.local_ip = sock.getsockname()[0]
         except OSError:
-            local_ip = "?"
-        log.info("Node ini: %s (%s) -> master %s:%d", socket.gethostname(), local_ip, host, port)
+            self.local_ip = "?"
+        hostname = socket.gethostname()
+        if console.is_tty and not self._banner_shown:
+            console.write(console.panel("WORKER SIAP", [
+                f"Perangkat : {hostname} ({self.local_ip})",
+                f"Master    : {host}:{port}",
+                f"Proses    : {self.processes} · core logis {os.cpu_count() or 1}",
+            ], tone="green"))
+            console.write("")
+            self._banner_shown = True
+        log.info("[koneksi] %s (%s) -> master %s:%d", hostname, self.local_ip, host, port)
         self.conn.send(make_msg(REGISTER,
                                 worker_id=self.worker_id,
                                 cpu_cores=os.cpu_count() or 1,
-                                hostname=socket.gethostname(),
+                                hostname=hostname,
                                 processes=self.processes))
         ack = self.conn.recv()
         if ack["type"] != REGISTER_ACK:
             raise ValueError(f"Balasan pertama bukan REGISTER_ACK: {ack['type']}")
         self.heartbeat_interval = ack.get("heartbeat_interval", self.heartbeat_interval)
-        log.info("Terhubung ke %s:%d (mode=%s, proses=%d, heartbeat=%.1fs)",
+        log.info("[ok] Terhubung ke %s:%d | mode=%s | proses=%d | heartbeat=%.1fs",
                  host, port, ack.get("mode"), self.processes, self.heartbeat_interval)
 
     # ---------- heartbeat ----------
@@ -89,24 +116,29 @@ class Worker:
     def _report_idle(self, reason):
         """Tampilkan status 'menunggu tugas' beserta alasannya supaya pengguna
         Worker tidak menyangka program macet saat laptopnya diam.
-        Ditampilkan hanya saat alasan berubah atau tiap 15 detik (anti-spam)."""
+        Ditampilkan hanya saat alasan berubah atau tiap 20 detik (anti-spam)."""
         now = time.monotonic()
         reason = reason or "queue_empty"
-        if reason == self._last_idle_reason and (now - self._last_idle_ts) < 15.0:
+        if reason == self._last_idle_reason and (now - self._last_idle_ts) < 20.0:
             return
         self._last_idle_reason = reason
         self._last_idle_ts = now
-        if reason == "filter":
-            log.info("[menunggu tugas] Master sedang memilih worker lain untuk "
-                     "distribusi — laptop ini sengaja idle, bukan macet. "
-                     "(Di terminal master bisa ketik 'all' atau 'pilih <nama-mu>')")
+        if reason == NO_TASK_NOT_STARTED:
+            log.info("[menunggu] Master belum memulai pemindaian. Di menu Master "
+                     "pilih [1] Mulai pemindaian - laptop ini siap, bukan macet.")
+        elif reason == "filter":
+            log.info("[menunggu] Master sedang membatasi distribusi ke worker lain. "
+                     "Di menu Master pilih [4] Atur distribusi -> 'a' (semua) atau "
+                     "nama/IP laptop ini. Laptop ini sengaja idle, bukan macet.")
         else:
-            log.info("[menunggu tugas] Antrean kosong / semua task sedang "
-                     "dikerjakan worker lain — otomatis lanjut begitu ada tugas.")
+            log.info("[menunggu] Antrean kosong / semua tugas sedang dikerjakan "
+                     "worker lain - otomatis lanjut begitu ada tugas.")
 
     # ---------- pekerjaan ----------
     def _handle_task(self, task):
         self.current_task = task["task_id"]
+        log.info("[task] mulai %s | %s:%d-%d", task["task_id"], task["host"],
+                 task["port_start"], task["port_end"])
         t0 = time.monotonic()
         results = self.pool.scan_task(task)
         duration = time.monotonic() - t0
@@ -116,13 +148,18 @@ class Worker:
                                 attempt=task.get("attempt", 0),
                                 results=results,
                                 duration=round(duration, 4)))
+        self.tasks_done += 1
+        self.ports_done += len(results)
         self.current_task = None
-        log.info("Task %s selesai (%d port, %.2f s)", task["task_id"], len(results), duration)
+        log.info("[task] selesai %s | %d port | %.2f s (total %d tugas / %d port)",
+                 task["task_id"], len(results), duration,
+                 self.tasks_done, self.ports_done)
 
     def _session(self):
         """Satu koneksi penuh sampai SHUTDOWN / koneksi putus."""
         self._connect()
-        hb = threading.Thread(target=self._heartbeat_loop, args=(self.conn,), daemon=True)
+        hb = threading.Thread(target=self._heartbeat_loop, args=(self.conn,),
+                              daemon=True)
         hb.start()
         try:
             while not self.stop_event.is_set():
@@ -135,7 +172,7 @@ class Worker:
                     self._report_idle(msg.get("reason"))
                     time.sleep(0.5)  # poll lagi nanti
                 elif mtype == SHUTDOWN:
-                    log.info("Master meminta SHUTDOWN: %s", msg.get("reason"))
+                    log.info("[selesai] Master meminta SHUTDOWN: %s", msg.get("reason"))
                     return
         finally:
             self.conn.close()
@@ -149,13 +186,21 @@ class Worker:
             except (ConnectionError, OSError, ValueError) as e:
                 retries += 1
                 if retries > self.max_retries:
-                    log.error("Gagal reconnect %d kali — Worker berhenti.", self.max_retries)
+                    log.error("Gagal reconnect %d kali - Worker berhenti.", self.max_retries)
                     break
                 wait = min(1.0 * retries, 10.0)
-                log.warning("Koneksi putus (%s) — reconnect %d/%d dalam %.1f s",
+                log.warning("Koneksi putus (%s) - reconnect %d/%d dalam %.1f s",
                             e, retries, self.max_retries, wait)
                 self.stop_event.wait(wait)
         self.pool.close()
+        if console.is_tty:
+            console.write("")
+            console.write(console.panel("WORKER BERHENTI", [
+                f"Perangkat : {socket.gethostname()} ({self.local_ip})",
+                f"Tugas     : {self.tasks_done} selesai",
+                f"Port      : {self.ports_done} dipindai",
+                f"Durasi    : {_fmt_duration(time.monotonic() - self.started_at)}",
+            ]))
         log.info("Worker berhenti.")
 
 
@@ -163,7 +208,8 @@ def main():
     ap = argparse.ArgumentParser(description="Worker DPS (jalankan di tiap node Worker)")
     ap.add_argument("--master", default=None, help="host:port Master (default dari config)")
     ap.add_argument("--id", default=None, help="worker_id (default hostname-pid)")
-    ap.add_argument("--processes", type=int, default=None, help="jumlah proses Pool (default: jumlah core logis)")
+    ap.add_argument("--processes", type=int, default=None,
+                    help="jumlah proses Pool (default: jumlah core logis)")
     ap.add_argument("--config", default=None, help="path config.json")
     ap.add_argument("--max-retries", type=int, default=10)
     args = ap.parse_args()
@@ -178,11 +224,22 @@ def main():
     worker_id = args.id or f"{socket.gethostname()}-{os.getpid()}"
     processes = args.processes or os.cpu_count() or 1
 
-    worker = Worker(master_addr, worker_id, processes, cfg, max_retries=args.max_retries)
+    if console.is_tty:
+        console.write(console.banner(
+            "DPS · WORKER",
+            "Siap menerima tugas dari Master",
+            "WORKER",
+        ))
+        console.write("")
+
+    worker = Worker(master_addr, worker_id, processes, cfg,
+                    max_retries=args.max_retries)
     try:
         worker.run()
     except KeyboardInterrupt:
         log.info("Dihentikan oleh pengguna.")
+    finally:
+        worker.pool.close()
 
 
 if __name__ == "__main__":

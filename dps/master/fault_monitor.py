@@ -30,6 +30,7 @@ class FaultMonitor(threading.Thread):
         now = time.time()
         for wid, w in list(self.master.workers.items()):
             if w["alive"] and (now - w["last_seen"]) > self.master.hb_timeout:
-                log.warning("Worker %s tanpa kabar %.1f s (timeout %.1f s) -> dianggap mati",
-                            wid, now - w["last_seen"], self.master.hb_timeout)
+                if not getattr(self.master, "ui_enabled", False):
+                    log.warning("Worker %s tanpa kabar %.1f s (timeout %.1f s) -> dianggap mati",
+                                wid, now - w["last_seen"], self.master.hb_timeout)
                 self.master.mark_worker_dead(wid, reason="heartbeat_timeout")

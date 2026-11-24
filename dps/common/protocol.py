@@ -27,6 +27,7 @@ HEARTBEAT = "HEARTBEAT"
 # laptopnya diam (ditampilkan di log Worker, bukan sekadar diam tanpa pesan).
 NO_TASK_FILTER = "filter"        # worker tidak termasuk pilihan distribusi master
 NO_TASK_QUEUE_EMPTY = "queue_empty"  # antrean kosong / semua task sedang dikerjakan worker lain
+NO_TASK_NOT_STARTED = "not_started"  # master belum menekan "Mulai pemindaian"
 
 # Field wajib per tipe pesan
 REQUIRED_FIELDS = {
