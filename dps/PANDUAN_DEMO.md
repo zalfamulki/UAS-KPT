@@ -20,7 +20,7 @@ jangan lompat. Setiap langkah berpola sama:
 1. **TERMINAL A, B, C** = 3 jendela cmd di PC MASTER yang kamu buka di Langkah 1.0. Nama-nama ini dipakai konsisten sampai bawah.
 2. Di PC WORKER cukup 1 terminal per PC.
 3. Terminal yang baru dibuka **wajib masuk folder program dulu** (Langkah 1.0) sebelum menjalankan perintah `python ...`.
-4. Perintah `list` / `pilih` / `all` / `keluar` **diketik persis di TERMINAL B** — di tulisan `perintah>` milik Master — bukan di jendela baru.
+4. Menu (`1`–`5`, `0`) dan perintah teks (`list` / `pilih` / `all` / `keluar`) **diketik persis di TERMINAL B** — di tulisan `Pilih menu >` milik Master — bukan di jendela baru.
 
 ---
 
@@ -110,9 +110,29 @@ python target/target_sim.py --serve --gt target/ground_truth.json
 ```
 python master/master.py --targets targets.txt --gt target/ground_truth.json
 ```
-👀 `Master 0.0.0.0:5000 | mode=dynamic | 8 task (chunk=250) | total 2000 port`,
-diikuti tulisan bantuan `[perintah master] list | pilih ...` dan dashboard tiap 2 detik.
-⛔ biarkan menyala. **Master sedang menunggu worker masuk — ini normal, bukan macet.**
+👀 Master menampilkan **banner + menu statis** (bukan baris log yang mengalir):
+```
+┌ DPS | DISTRIBUTED PORT SCANNER ──────────────────────┐
+│ Mode dynamic | Bind 0.0.0.0:5000 | 8 tugas | 2000 port │
+└──────────────────────────────────────────────────────┘
+STATUS: SIAP - pemindaian belum dimulai. Pilih [1] untuk mengirim tugas.
+```
+diikuti tabel Worker (masih kosong), panel **AKTIVITAS TERAKHIR**, dan menu:
+
+| Pilih | Fungsi |
+|---|---|
+| `1` | Mulai pemindaian (kalau sudah jalan: monitor live) |
+| `2` | Status ringkas |
+| `3` | Tabel semua Worker (nama laptop + IP + tugas aktif) |
+| `4` | Atur distribusi (semua / pilih sebagian) |
+| `5` | Bantuan |
+| `0` | Keluar dan simpan hasil |
+
+⛔ biarkan menyala. **Master sedang menunggu worker masuk — ini normal, bukan
+macet.** Layar **tidak berkedip** dan **tidak mencetak apa pun** saat menganggur;
+hanya berubah ketika ada Worker masuk/mati atau menu dipilih.
+⚠️ **Jangan pilih `[1]` dulu** — tunggu Bagian 2 selesai (semua Worker masuk),
+baru mulai pemindaian di Langkah 3.0.
 
 > Varian kalau ditanya dosen — mode static (bagi rata di awal):
 > ```
@@ -127,16 +147,24 @@ diikuti tulisan bantuan `[perintah master] list | pilih ...` dan dashboard tiap 
 ⌨️ (terminal baru di PC worker; **ganti `192.168.1.10` dengan `<IP_MASTER>` hasil Langkah 0.4**):
 ```
 cd /d "D:\My Project\UAS KPT\dps"
-python worker/worker.py --master 192.168.1.10:5000
+python worker/worker.py --master 192.168.0.119:5000
 ```
-👀 di PC worker:
+👀 di PC worker (panel identitas + baris log):
 ```
-Node ini: NAMA-LAPTOP-MU (192.168.1.11) -> master 192.168.1.10:5000
-Terhubung ke 192.168.1.10:5000 (mode=dynamic, proses=8, heartbeat=2.0s)
++---------------- WORKER SIAP ----------------+
+| Perangkat : NAMA-LAPTOP-MU (192.168.1.11)    |
+| Master    : 192.168.1.10:5000                |
+| Proses    : 8 - core logis 8                 |
++----------------------------------------------+
+15:04:12  INFO    [koneksi] NAMA-LAPTOP-MU (192.168.1.11) -> master 192.168.1.10:5000
+15:04:12  INFO    [ok] Terhubung ke 192.168.1.10:5000 | mode=dynamic | proses=8 | heartbeat=2.0s
 ```
-👀 di **TERMINAL B** (PC master) muncul:
+👀 di **TERMINAL B** (PC master) layar langsung diperbarui: baris baru di panel
+**AKTIVITAS TERAKHIR** + satu baris Worker di tabel (nama laptop + IP):
 ```
-Worker w-NAMA-LAPTOP [NAMA-LAPTOP @ 192.168.1.11] terhubung (cores=8, proses=8)
+15:04:12  + NAMA-LAPTOP-MU (192.168.1.11) terhubung - 8 proses
+...
+| 1 | NAMA-LAPTOP-MU-1234 | NAMA-LAPTOP-MU | 192.168.1.11 | 8 | 0% | 0/0 | - | menunggu mulai |
 ```
 ✅ tidak terhubung? langsung ke tabel "Kalau terasa macet" di Langkah 3.5.
 
@@ -145,57 +173,86 @@ Worker w-NAMA-LAPTOP [NAMA-LAPTOP @ 192.168.1.11] terhubung (cores=8, proses=8)
 (perintahnya identik semua; IP master sama). Ulangi sampai 9 PC.
 
 ### Langkah 2.3 — 📍 TERMINAL B — pastikan semua sudah masuk
-⌨️ (ketik di tulisan `perintah>` milik Master):
+⌨️ (ketik `3` di tulisan `Pilih menu >` milik Master, lalu tekan `Enter`):
 ```
-list
+3
 ```
-👀 9 baris berisi IP + nama laptop + proses + tugas + status tiap worker.
+👀 tabel **SEMUA WORKER** berisi 9 baris: nomor, Worker ID, **nama laptop
+(hostname)**, **IP**, jumlah proses, CPU, tugas selesai, tugas aktif, status
+(`menunggu mulai` karena pemindaian belum dimulai).
+Tekan `Enter` untuk kembali ke menu. Setelah pemindaian berjalan, pilihan
+`[1]` otomatis berubah menjadi **Monitor langsung**. Setelah semua tugas selesai,
+Master kembali ke menu dan `[1]` menjadi **Lihat hasil**.
 
 ---
 
 ## BAGIAN 3 — SISTEM BERJALAN (hampir semuanya TANPA PERINTAH — cukup amati)
 
-### Langkah 3.1 — 📍 semua terminal — TANPA PERINTAH, amati
-👀 **TERMINAL B** tiap 2 detik menampilkan:
+### Langkah 3.0 — 📍 TERMINAL B — mulai pemindaian
+⌨️ (ketik `1` di `Pilih menu >`, lalu `Enter`):
 ```
-[dashboard] workers=9 (alive=9) | task: done=5 inflight=9 queued=3 failed=0 | port hasil=1500/2000 dup=0
-[distribusi] SEMUA worker
-  w-PC1   192.168.1.11   DESKTOP-ALFA   proses=8   tugas=2/2 cpu=35% | kerja
-  w-PC2   192.168.1.12   DESKTOP-BETA   proses=8   tugas=1/1 cpu=32% | kerja
+1
+```
+👀 Master langsung masuk **monitor live** (refresh 1 detik di tempat): kartu
+metrik (worker aktif, tugas, port, waktu, throughput, distribusi), progres port,
+dan tabel worker. Status di tabel berubah menjadi `bekerja` dengan kolom
+**Task aktif** berisi tugas yang sedang dipegang tiap laptop — jadi terlihat
+jelas siapa mengerjakan apa. Tekan `Enter` atau `Q` kapan pun untuk kembali ke
+menu; pemindaian tetap berjalan.
+
+### Langkah 3.1 — 📍 semua terminal — TANPA PERINTAH, amati
+👀 **TERMINAL B** (monitor live) kira-kira seperti ini:
+```
+MONITOR LANGSUNG                                   15:04:20 · refresh 1 dtk
++--------------+--------------+--------------+--------------+--------------+--------------+
+| WORKER       | TUGAS        | PORT         | WAKTU        | THROUGHPUT   | DISTRIBUSI   |
+| 9/9 aktif    | 5/8 selesai  | 1500/2000    | 12.4 s       | 121.0 port/s | SEMUA        |
+| 9 bekerja    | 3 antre      |              |              |              |              |
++--------------+--------------+--------------+--------------+--------------+--------------+
+  Progres port  ##########################....  (1500/2000)
+
+  WORKER (9)
+  +---+--------------+-------------+-----------------+--------+-----+-------+-------------+---------+
+  | # | Perangkat    | IP          | Proses          | ...    |     | Tugas | Task aktif  | Status  |
+  | 1 | DESKTOP-ALFA | 192.168.1.11| 8               |        |     | 2/2   | t00005 501-750 | bekerja |
+  | 2 | DESKTOP-BETA | 192.168.1.12| 8               |        |     | 1/1   | t00006 751-1000| bekerja |
   ...
 ```
-👀 di layar worker sesekali: `Task t00003 selesai (250 port, 3.12 s)`
+👀 di layar worker sesekali muncul baris log:
+`15:04:25  INFO    [task] selesai t00003 | 250 port | 3.12 s (total 2 tugas / 500 port)`
 
 ### Langkah 3.2 — 📍 TERMINAL B — demo pilihan distribusi (opsional, bagus untuk video)
-⌨️ ketik di tulisan `perintah>`:
+⌨️ tekan `Enter`/`Q` untuk kembali ke menu, lalu ketik `4` + `Enter`:
 ```
-pilih 192.168.1.11
+4
 ```
-(ganti IP dengan laptop yang mau kamu pilih — boleh juga nama laptop, mis. `pilih DESKTOP-ALFA`)
-👀 muncul `[distribusi] hanya ke 1 worker: ...` + pengingat cara kembali, dan
-dashboard berubah:
+👀 muncul tabel **ATUR DISTRIBUSI TUGAS**. Ketik `a` (semua), nomor worker,
+nama laptop, IP, atau Worker ID — misalnya:
 ```
-[distribusi] hanya ke: 192.168.1.11
-[hint] ada 3 tugas antre — kalau terasa macet, ketik 'all' atau 'pilih' worker lain
-  w-PC1   ... | kerja
-  w-PC2   ... | menunggu (tidak dipilih)
+1
 ```
+👀 Master mencatat `Distribusi hanya ke 1 worker: ...`, lalu tabel worker
+menampilkan kolom **Distribusi**: `ya` untuk yang dipilih, `-` untuk yang lain,
+dengan status `tidak dipilih`.
 👀 di laptop yang **tidak** dipilih muncul pesan jelas (bukan diam):
 ```
-[menunggu tugas] Master sedang memilih worker lain untuk distribusi — laptop ini sengaja idle, bukan macet. (Di terminal master bisa ketik 'all' atau 'pilih <nama-mu>')
+15:04:40  INFO    [menunggu] Master sedang membatasi distribusi ke worker lain. Di menu
+                  Master pilih [4] Atur distribusi -> 'a' (semua) atau nama/IP laptop ini.
+                  Laptop ini sengaja idle, bukan macet.
 ```
 
 ### Langkah 3.3 — 📍 TERMINAL B — kembalikan ke semua worker
-⌨️:
+⌨️ ketik `all` (atau `4` lalu `a`):
 ```
 all
 ```
-👀 `[distribusi] kembali ke SEMUA worker` — semua worker langsung kerja lagi.
+👀 `Distribusi kembali ke SEMUA worker` — semua worker langsung kerja lagi.
 
-### Langkah 3.4 — 📍 semua terminal — TANPA PERINTAH — selesai otomatis
-👀 **TERMINAL B**: `Semua task DONE/FAILED -> sistem selesai` → Master menyuruh
-semua worker pulang (SHUTDOWN), worker **berhenti sendiri**, lalu hasil tersimpan
-di folder `results\`:
+### Langkah 3.4 — 📍 semua terminal — pemindaian selesai
+👀 **TERMINAL B**: status berubah menjadi **SELESAI** dan Master kembali ke
+menu. Worker tetap terhubung dan menunggu, jadi terminal worker tidak ditutup.
+Pilih `0` atau tekan `Ctrl+C` di TERMINAL B bila ingin mengakhiri sesi. Master
+kemudian mengirim SHUTDOWN dan menyimpan hasil di folder `results\`:
 - `results.json` / `results.csv` — status tiap port
 - `events.csv` — timeline: siapa daftar, siapa kerja apa, worker mati, requeue
 - `heartbeats.csv` — catatan CPU/mem tiap worker
@@ -203,19 +260,24 @@ di folder `results\`:
   **IP + nama laptop tiap worker**, dan perbandingan dengan kunci jawaban
   (`matched` / `mismatched`)
 
+👀 Setelah memilih `0` atau menekan `Ctrl+C`, semua Worker menerima SHUTDOWN
+dari Master dan berhenti sendiri.
+
 ### Langkah 3.5 — 📍 kapan pun ragu — cek status dulu, jangan panik
 Semua keadaan "diam" punya pesan. Arti tiap status dan tindakannya:
 
 | Yang terlihat | Artinya | Yang perlu dilakukan |
 |---|---|---|
-| Worker: `[menunggu tugas] Master sedang memilih worker lain...` | laptop sengaja tidak dipilih (mode `pilih` aktif) | di TERMINAL B ketik `all`, atau `pilih` nama laptop itu |
-| Worker: `[menunggu tugas] Antrean kosong / semua task sedang dikerjakan worker lain...` | normal — tugas sedang dipegang worker lain | tidak perlu apa-apa, otomatis lanjut |
-| TERMINAL B: status `menunggu (tidak dipilih)` | sama dengan baris pertama di atas | ketik `all` |
-| TERMINAL B: `[hint] ada N tugas antre...` | ada tugas menunggu di mode `pilih` | ketik `all` atau `pilih` worker lain |
+| Worker: `[menunggu] Master belum memulai pemindaian...` | Master masih di menu, `[1]` belum ditekan | di TERMINAL B pilih `1` |
+| Worker: `[menunggu] Master sedang membatasi distribusi ke worker lain...` | laptop sengaja tidak dipilih (mode pilih aktif) | di TERMINAL B ketik `all`, atau `4` lalu pilih laptop itu |
+| Worker: `[menunggu] Antrean kosong / semua tugas sedang dikerjakan worker lain...` | normal — tugas sedang dipegang worker lain | tidak perlu apa-apa, otomatis lanjut |
+| TERMINAL B: status `tidak dipilih` | sama dengan baris kedua di atas | ketik `all` atau `4` lalu pilih worker itu |
+| TERMINAL B: `[info] N tugas antre...` di monitor | ada tugas menunggu di mode pilih | tekan `Enter`, lalu `all` |
 | TERMINAL B: `MATI` di baris worker | koneksi putus / proses worker ditutup | tugas otomatis di-requeue; jalankan lagi Langkah 2.1 di PC itu |
-| TERMINAL B: `failed=N` naik | 1 tugas sudah 3x gagal | cek jaringan/target, lalu ulangi run |
+| TERMINAL B: kartu `GAGAL` naik | 1 tugas sudah 3x gagal | cek jaringan/target, lalu ulangi run |
 
-Ragu? **ketik `list` di TERMINAL B dulu** sebelum mengambil tindakan.
+Ragu? **tekan `2` (Status ringkas) atau `3` (Daftar worker lengkap) di TERMINAL B**
+sebelum mengambil tindakan.
 
 ---
 

@@ -54,21 +54,37 @@ python target/target_sim.py --serve --gt target/ground_truth.json
 python master/master.py --targets targets.txt --gt target/ground_truth.json
 ```
 
-**Perintah interaktif di terminal Master** (diketik langsung selama master berjalan):
+Master menampilkan **menu statis**: layar TIDAK diulang-ulang saat menganggur,
+hanya digambar ulang ketika keadaan berubah (Worker masuk/mati, pemindaian
+dimulai, distribusi diubah) atau saat menu dipilih. Saat pertama dibuka
+pemindaian **belum dimulai** — hubungkan dulu semua Worker, lalu pilih `[1]`.
 
-| Perintah | Fungsi |
+| Menu | Fungsi |
 |---|---|
-| `list` | daftar worker: **IP, nama laptop (hostname)**, jumlah proses, tugas dapat/selesai, CPU |
-| `pilih <ip / nama / id>` | distribusi **hanya** ke worker itu — contoh: `pilih 192.168.1.11`, `pilih DESKTOP-XYZ`, `pilih w1` (boleh beberapa: `pilih 192.168.1.11 192.168.1.12`) |
-| `all` | kembali membagikan tugas ke **SEMUA** worker (default) |
-| `keluar` | hentikan master dengan rapi (hasil seadanya tetap disimpan) |
+| `1` | **Mulai pemindaian**. Saat berjalan membuka **monitor live**; setelah selesai menampilkan ringkasan. |
+| `2` | Status ringkas: progres tugas/port, antrean, aktivitas terakhir |
+| `3` | Tabel semua Worker: nomor, Worker ID, **nama laptop (hostname)**, **IP**, tugas yang sedang dikerjakan, progres, CPU/RAM, status (`kerja` / `menunggu` / `MATI`) |
+| `4` | Atur **distribusi**: `a`/`all` = semua Worker, atau ketik nomor/nama/IP/Worker ID untuk memilih sebagian |
+| `5` | Bantuan dan penjelasan istilah |
+| `0` | Hentikan Master dengan rapi (hasil seadanya tetap disimpan) |
 
-Dashboard juga menampilkan baris per worker (IP + nama laptop + **status**:
-`kerja` / `menunggu (tidak dipilih)` / `menunggu (antrean kosong)` / `MATI`),
-muncul `[hint]` otomatis saat ada tugas antre di mode `pilih`, dan
-IP/hostname tiap worker ikut tersimpan di `summary.json` → dipakai untuk tabel
-Konfigurasi Node di BAB III. Di sisi worker, keadaan menganggur juga dijelaskan
-(`[menunggu tugas] ...` beserta alasannya) supaya tidak terlihat seperti macet.
+Monitor live dapat ditutup dengan `Enter`/`Q` untuk kembali ke menu. Setelah
+semua tugas selesai, Master dan Worker tetap hidup sampai Anda memilih `0`
+atau menekan `Ctrl+C` di Master.
+
+Perintah teks juga bisa diketik langsung, mis. `pilih 192.168.1.11`,
+`pilih DESKTOP-XYZ`, `pilih w1 w2`, `all`, `list`, `status`, `keluar`.
+
+Tabel Worker menampilkan **tugas aktif tiap worker** sehingga terlihat siapa
+mengerjakan apa; pada mode `pilih`, Worker yang tidak dipilih diberi status
+`menunggu (tidak dipilih)` agar tidak terlihat macet. IP/hostname tiap worker
+ikut tersimpan di `summary.json` → dipakai untuk tabel Konfigurasi Node di
+BAB III. Di sisi Worker, keadaan menganggur juga dijelaskan (`[menunggu] ...`
+beserta alasannya).
+
+Mode non-interaktif (stdout dialihkan ke file, mis. benchmark) otomatis
+melewati menu dan langsung memulai pemindaian; paksa dengan `--no-ui`
+(log sederhana) atau `--ui` (paksa tampilan menu).
 
 **Terminal 3.. — Worker** (satu perintah per node; ulangi sesuai jumlah worker):
 
@@ -76,10 +92,12 @@ Konfigurasi Node di BAB III. Di sisi worker, keadaan menganggur juga dijelaskan
 python worker/worker.py --master 127.0.0.1:5000
 ```
 
-Run selesai otomatis saat semua task DONE/FAILED — Master mengirim SHUTDOWN ke
-Worker lalu menyimpan `results/results.json`, `results.csv`, `events.csv`,
-`heartbeats.csv`, dan `summary.json`. Hasil otomatis dibandingkan dengan ground
-truth (matched/mismatched, precision/recall status open).
+Saat semua task berstatus DONE/FAILED, Master menampilkan status selesai dan
+kembali menunggu di menu. Worker tetap terhubung dalam keadaan idle. Pilih `0`
+atau tekan `Ctrl+C` di Master untuk mengirim SHUTDOWN ke Worker dan menyimpan
+`results/results.json`, `results.csv`, `events.csv`, `heartbeats.csv`, serta
+`summary.json`. Hasil otomatis dibandingkan dengan ground truth
+(matched/mismatched, precision/recall status open).
 
 ## Benchmark T1–T6
 
@@ -132,7 +150,7 @@ ground truth identik di semua mode uji.
    - [ ] Python ≥3.8 terinstal (`python --version`)
    - [ ] Salin folder `dps/` + `pip install -r requirements.txt`
    - [ ] `python worker/worker.py --master <IP_MASTER>:5000`
-   - [ ] Worker muncul di dashboard Master
+   - [ ] Worker muncul di menu Master (`[3]` tabel Worker)
 
 4. Di Master:
 
